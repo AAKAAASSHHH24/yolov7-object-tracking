@@ -3,18 +3,23 @@ from __future__ import print_function
 import os
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from skimage import io
-
+from random import randint
 import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
 
-np.random.seed(0)
 
+def get_color():
+    # r = randint(0, 255)
+    # g = randint(0, 255)
+    # b = randint(0, 255)
+    color = (randint(0, 255), randint(0, 255), randint(0, 255))
+    return color
 def linear_assignment(cost_matrix):
     try:
         import lap #linear assignment problem solver
@@ -67,6 +72,7 @@ def convert_x_to_bbox(x, score=None):
         return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((1,5))
 
 """This class represents the internal state of individual tracked objects observed as bbox."""
+
 class KalmanBoxTracker(object):
     
     count = 0
@@ -99,11 +105,9 @@ class KalmanBoxTracker(object):
         CY = (bbox[1]+bbox[3])//2
         self.centroidarr.append((CX,CY))
         
+        
         #keep yolov5 detected class information
         self.detclass = bbox[5]
-
-        # If we want to store bbox
-        self.bbox_history = [bbox]
         
     def update(self, bbox):
         """
@@ -118,8 +122,7 @@ class KalmanBoxTracker(object):
         CX = (bbox[0]+bbox[2])//2
         CY = (bbox[1]+bbox[3])//2
         self.centroidarr.append((CX,CY))
-        self.bbox_history.append(bbox)
-    
+        
     def predict(self):
         """
         Advances the state vector and returns the predicted bounding box estimate
@@ -183,6 +186,7 @@ def associate_detections_to_trackers(detections, trackers, iou_threshold = 0.3):
     for d, det in enumerate(detections):
         if(d not in matched_indices[:,0]):
             unmatched_detections.append(d)
+            
     
     unmatched_trackers = []
     for t, trk in enumerate(trackers):
@@ -216,10 +220,14 @@ class Sort(object):
         self.iou_threshold = iou_threshold
         self.trackers = []
         self.frame_count = 0
+        self.color_list = []
+        
+
+ 
     def getTrackers(self,):
         return self.trackers
         
-    def update(self, dets= np.empty((0,6))):
+    def update(self, dets= np.empty((0,6)), unique_color = False):
         """
         Parameters:
         'dets' - a numpy array of detection in the format [[x1, y1, x2, y2, score], [x1,y1,x2,y2,score],...]
@@ -237,6 +245,7 @@ class Sort(object):
         to_del = []
         ret = []
         for t, trk in enumerate(trks):
+           
             pos = self.trackers[t].predict()[0]
             trk[:] = [pos[0], pos[1], pos[2], pos[3], 0, 0]
             if np.any(np.isnan(pos)):
@@ -244,6 +253,8 @@ class Sort(object):
         trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
         for t in reversed(to_del):
             self.trackers.pop(t)
+            if unique_color:
+                self.color_list.pop(t)
         matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.iou_threshold)
         
         # Update matched trackers with assigned detections
@@ -253,8 +264,10 @@ class Sort(object):
         # Create and initialize new trackers for unmatched detections
         for i in unmatched_dets:
             trk = KalmanBoxTracker(np.hstack((dets[i,:], np.array([0]))))
-            #trk = KalmanBoxTracker(np.hstack(dets[i,:])
             self.trackers.append(trk)
+            if unique_color:
+                self.color_list.append(get_color())
+        
         
         i = len(self.trackers)
         for trk in reversed(self.trackers):
@@ -265,6 +278,9 @@ class Sort(object):
             #remove dead tracklet
             if(trk.time_since_update >self.max_age):
                 self.trackers.pop(i)
+                if unique_color:
+                    self.color_list.pop(i)
+
         if(len(ret) > 0):
             return np.concatenate(ret)
         return np.empty((0,6))
